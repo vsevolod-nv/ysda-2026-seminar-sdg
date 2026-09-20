@@ -1,0 +1,20 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+.cache/
+.DS_Store
+archive/
+results/*
+!results/.gitkeep
+data/images/
+data/*.json
+
+# Local notebook under review
+/04-results.ipynb
+README.md
+
+# Local credentials
+.env.*
+!.env.example

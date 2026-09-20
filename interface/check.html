@@ -1,0 +1,18 @@
+<p>Проверьте всю картинку и все рамки по инструкции. Здесь рамки менять не нужно.</p>
+<div class="check-tools">
+  <label>Масштаб <input class="zoom" type="range" min="100" max="300" step="25" value="100"></label>
+  <button class="toggle-boxes" type="button">Скрыть / показать рамки</button>
+</div>
+<div class="check-viewport"><div class="check-stage">
+  <img src="{{image}}" alt="Изображение для проверки">
+  <svg class="boxes" viewBox="0 0 1000 1000" preserveAspectRatio="none"></svg>
+</div></div>
+<p><b>Все подходящие объекты выделены?</b></p>
+{{field type="radio" name="complete" value="yes" label="Да"}}
+{{field type="radio" name="complete" value="no" label="Нет, есть пропуски"}}
+<p><b>Нет лишних рамок и повторных выделений?</b></p>
+{{field type="radio" name="no_extra" value="yes" label="Да"}}
+{{field type="radio" name="no_extra" value="no" label="Нет, есть лишние"}}
+<p><b>Границы всех нарисованных рамок соответствуют инструкции?</b></p>
+{{field type="radio" name="accurate" value="yes" label="Да"}}
+{{field type="radio" name="accurate" value="no" label="Нет, нужно исправить границы"}}
