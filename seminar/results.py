@@ -4,10 +4,26 @@ import hashlib
 import json
 from pathlib import Path
 import pandas as pd
+import numpy as np
 from .api import annotations_to_boxes
 
 FINISHED = {"SUBMITTED", "ACCEPTED", "REJECTED"}
 QUESTIONS = ("complete", "no_extra", "accurate")
+
+
+def time_outliers(candidates, multiplier=1.5):
+    """Flag times outside log-IQR fences separately for each annotation method."""
+    frame = pd.DataFrame(candidates)
+    seconds = pd.to_numeric(frame["seconds"], errors="coerce")
+    logs = np.log(seconds.where(seconds > 0))
+    grouped = logs.groupby(frame["method"])
+    q1 = grouped.transform(lambda s: s.quantile(0.25))
+    q3 = grouped.transform(lambda s: s.quantile(0.75))
+    frame["min_seconds"] = np.exp(q1 - multiplier * (q3 - q1))
+    frame["max_seconds"] = np.exp(q3 + multiplier * (q3 - q1))
+    frame["time_outlier"] = (~np.isfinite(seconds) | (seconds <= 0)
+                             | (seconds < frame.min_seconds) | (seconds > frame.max_seconds))
+    return frame
 
 
 def load_answers(path):
@@ -73,7 +89,7 @@ def annotation_results(path, method):
     for row in load_answers(path):
         values = row["input_values"]
         if "image_id" not in values or "result" not in row["output_values"]:
-            raise ValueError("Нужны результаты проекта из ноутбука 01 или 02")
+            raise ValueError("Нужны результаты проекта из ноутбука 02 или 03")
         if row["assignment_id"] in seen_pages:
             raise ValueError("Для измерения времени требуется одна картинка на страницу")
         seen_pages.add(row["assignment_id"])
@@ -83,10 +99,12 @@ def annotation_results(path, method):
             if seconds <= 0:
                 raise ValueError("Некорректное время выполнения")
         key = f"{method}/{row['assignment_id']}/{row['task_id']}"
+        boxes = annotations_to_boxes(row["output_values"]["result"], allow_degenerate=True)
         candidates.append({
             "candidate_id": hashlib.sha256(key.encode()).hexdigest()[:24],
             "method": method, "image_id": values["image_id"], "image_url": values["image"],
-            "boxes": annotations_to_boxes(row["output_values"]["result"]),
+            "boxes": boxes,
+            "invalid_box_count": sum(b[0] == b[2] or b[1] == b[3] for b in boxes),
             "assignment_id": row["assignment_id"], "worker_id": row["worker_id"],
             "status": row["status"], "seconds": seconds, "reward": row["reward"],
         })
@@ -157,6 +175,8 @@ def quality_report(candidates, check_answers, overlap=3, controls=None):
         decision = "pending"
         if count >= overlap:
             decision = "passed" if yes > count / 2 else "needs_correction" if yes < count / 2 else "disputed"
+        if count >= overlap and candidate.get("invalid_box_count", 0):
+            decision = "needs_correction"
         payments = review_paid[key]
         rows.append({**candidate, "reviewers": count, "yes_votes": yes,
                      "disagreement": 0 < yes < count, "decision": decision,

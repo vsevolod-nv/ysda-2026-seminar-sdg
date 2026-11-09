@@ -70,7 +70,7 @@ def boxes_to_annotations(boxes):
                                               "p2": {"x": b[2], "y": b[3]}}} for b in boxes]
 
 
-def annotations_to_boxes(annotations):
+def annotations_to_boxes(annotations, *, allow_degenerate=False):
     boxes = []
     if not isinstance(annotations, list):
         raise ValueError("Ожидается список прямоугольников")
@@ -80,7 +80,9 @@ def annotations_to_boxes(annotations):
         p1, p2 = annotation["data"]["p1"], annotation["data"]["p2"]
         box = [min(p1["x"], p2["x"]), min(p1["y"], p2["y"]),
                max(p1["x"], p2["x"]), max(p1["y"], p2["y"])]
-        if not all(0 <= x <= 1 for x in box) or box[0] >= box[2] or box[1] >= box[3]:
+        if not all(0 <= x <= 1 for x in box):
+            raise ValueError("Координаты рамки должны быть от 0 до 1")
+        if not allow_degenerate and (box[0] == box[2] or box[1] == box[3]):
             raise ValueError("Некорректная рамка")
         boxes.append(box)
     return boxes

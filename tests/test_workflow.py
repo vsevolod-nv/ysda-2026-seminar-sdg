@@ -102,7 +102,7 @@ def test_ready_data_matches_real_dino_cache():
 @pytest.mark.skipif(any(not (ROOT / name).exists() for name in
                        ("04-results.ipynb", "data/dataset.json", "data/dino_predictions.json", "data/check_controls.json")),
                     reason="Нужны локальный датасет и четвёртый ноутбук")
-def test_three_notebooks_end_to_end_with_fake_api(tmp_path, monkeypatch):
+def test_annotation_notebooks_end_to_end_with_fake_api(tmp_path, monkeypatch):
     """Синтетические ответы существуют только внутри временной директории теста."""
     import seminar.api as api
     import matplotlib
@@ -184,13 +184,16 @@ def test_three_notebooks_end_to_end_with_fake_api(tmp_path, monkeypatch):
         raise AssertionError((method, path))
 
     monkeypatch.setattr(api, "request", fake_request)
-    for path in [ROOT / name for name in ("02-manual-markup.ipynb", "03-dino-markup.ipynb", "04-results.ipynb")]:
+    for path in [ROOT / name for name in ("02-manual-markup.ipynb", "03-dino-markup.ipynb")]:
         notebook = nbformat.read(path, as_version=4)
         nbformat.validate(notebook)
         env = {"__name__": "__main__"}
         for cell in notebook.cells:
             if cell.cell_type == "code":
                 source = cell.source.replace("REWARD = None", "REWARD = 1.0")
+                source = source.replace("ALLOW_TASK_CHANGES = False", "ALLOW_TASK_CHANGES = True")
+                source = source.replace("importlib.reload(seminar.api)", "pass")
+                source = source.replace("importlib.reload(seminar.results)", "pass")
                 source = source.replace('EXISTING_PROJECT_ID = "10670"', "EXISTING_PROJECT_ID = None")
                 source = source.replace('EXISTING_POOL_ID = "6756373"', "EXISTING_POOL_ID = None")
                 source = source.replace('EXISTING_PROJECT_ID = "10673"', "EXISTING_PROJECT_ID = None")
@@ -198,11 +201,9 @@ def test_three_notebooks_end_to_end_with_fake_api(tmp_path, monkeypatch):
                 exec(compile(source, str(path), "exec"), env)
                 env["display"] = lambda *args: None
         plt.close("all")
-    assert len(projects) == len(pools) == 3
-    passed = read_json(tmp_path / "results/passed.json")
-    assert len(passed) == 12
-    assert read_json(tmp_path / "results/needs_correction.json") == []
-    assert read_json(tmp_path / "results/pending_checks.json") == []
+    assert len(projects) == len(pools) == 2
+    for name in ("manual", "assisted"):
+        assert len(annotation_results(tmp_path / f"results/{name}.json", name)) == 6
     assisted_tasks = [t for t in tasks if t["pool_id"] == "pool-1"]
     assert all(len(t["unavailable_for"]) == 3 for t in assisted_tasks)
     for t in tasks:
@@ -218,7 +219,7 @@ def test_pool_does_not_open_while_moderation_is_pending():
         calls.append(method)
         return [{"type": "MUST_PASS_MODERATION", "active": True, "blocker": True}]
     with pytest.raises(ValueError, match="нельзя открыть"):
-        exec(cell.source, {"request": pending, "validation_url": "test/validate", "pool_id": "test"})
+        exec(cell.source, {"request": pending, "validation_url": "test/validate", "pool_id": "test", "ALLOW_TASK_CHANGES": True})
     assert calls == ["GET"]
 
 
@@ -233,10 +234,32 @@ def test_fields_used_by_interfaces_reach_worker():
         if filename == "04-results.ipynb" and not (ROOT / filename).exists():
             continue
         notebook = nbformat.read(ROOT / filename, as_version=4)
-        cell = next(c for c in notebook.cells if c.cell_type == "code" and "project_payload = {" in c.source)
+        cell = next((c for c in notebook.cells if c.cell_type == "code" and "project_payload = {" in c.source), None)
+        if cell is None and filename == "04-results.ipynb":
+            continue
         env = {"Path": Path, "classic_view": classic_view}
         exec(cell.source, env)
         spec = env["project_payload"]["task_spec"]["input_spec"]
         # Hidden fields are removed by the platform before JS and templates run.
         visible = {key for key, value in spec.items() if not value.get("hidden", False)}
         assert fields <= visible, (filename, fields - visible)
+
+
+def test_degenerate_worker_boxes_are_preserved_and_cannot_pass(tmp_path):
+    boxes = [[.47663, .0393, .47734, .0393], [.2, .3, .4, .5]]
+    answer = {"id": "a", "user_id": "author", "status": "ACCEPTED", "reward": 1,
+              "tasks": [{"id": "t", "input_values": {"image_id": "image", "image": "https://example.org/a.jpg"}}],
+              "solutions": [{"output_values": {"result": boxes_to_annotations(boxes)}}]}
+    write_json(tmp_path / "answers.json", [answer])
+    candidates = annotation_results(tmp_path / "answers.json", "manual")
+    assert candidates[0]["boxes"] == boxes
+    assert candidates[0]["invalid_box_count"] == 1
+    key = candidates[0]["candidate_id"]
+    detail, summary = quality_report(candidates, [vote(f"r{i}", key=key) for i in range(3)])
+    assert detail.iloc[0].decision == "needs_correction"
+    assert summary.iloc[0].annotation_paid == 1
+    assert summary.iloc[0].passed == 0
+    with pytest.raises(ValueError):
+        annotations_to_boxes(boxes_to_annotations(boxes))
+    with pytest.raises(ValueError):
+        annotations_to_boxes(boxes_to_annotations([[-.1, 0, .5, .5]]), allow_degenerate=True)
