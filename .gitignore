@@ -12,7 +12,6 @@ data/images/
 data/*.json
 
 # Local notebook under review
-/04-results.ipynb
 README.md
 
 # Local credentials
